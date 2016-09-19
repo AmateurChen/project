@@ -62,16 +62,26 @@ public class SFTPManager {
 		List<SFTPFile> result = new ArrayList<SFTPFile>();
 		
 		if(TextUtil.isEmpty(path)) {
-			path = "/";
+			throw new RuntimeException("获取远程目录路径不能为空");
 		}
+		
 		try {
 			Vector<?> vector = sftp.ls(path);
-			Iterator<?> iterator = vector.iterator();
-			while(iterator.hasNext()) {
-				Object obj = iterator.next();
-				if(obj instanceof LsEntry) {
-					LsEntry ls = (LsEntry) obj;
-					result.add(transFile(ls, path));
+			// 此时为文件路径
+			if(vector.size() == 1 && !cdDirectory(sftp, path)) {
+				SFTPFile transFile = transFile((LsEntry)vector.get(0), path);
+				transFile.setParentPath(TextUtil.replaceEndStr(path, transFile.getFileName(), ""));
+				result.add(transFile);
+			} else {// 是一个文件夹路径，获取文件夹下文件
+				Iterator<?> iterator = vector.iterator();
+				while(iterator.hasNext()) {
+					Object obj = iterator.next();
+					if(obj instanceof LsEntry) {
+						SFTPFile transFile = transFile((LsEntry) obj, path);
+						//出现以“..”命名的文件
+						if(!transFile.getFileName().matches("[\\.]*"))
+							result.add(transFile);
+					}
 				}
 			}
 		} catch (SftpException e) {
@@ -88,15 +98,36 @@ public class SFTPManager {
 	}
 	
 	public static void downloadFile(ChannelSftp sftp, SFTPFile file, String outPath) {
-		downloadFile(sftp, file.getFilePath(), outPath);
+		if(file.isDirectory()) {
+			List<SFTPFile> fileList = getDirectory(sftp, file.getFilePath());
+			outPath = outPath +"/"+ file.getFileName();
+			if(fileList.isEmpty()) {//空文件夹
+				File directoryFile = new File(outPath);
+				if(!directoryFile.exists()) directoryFile.mkdirs();
+			} else {
+				downloadFile(sftp, fileList, outPath);
+			}
+			
+		} else {
+			downloadFile(sftp, file.getFilePath(), outPath);
+		}
 	}
 	
 	public static void downloadFile(ChannelSftp sftp, String filePath, String outPath) {
+		File file = new File(outPath);
+		if(file.isFile()) {
+			System.err.println("文件下载输出路径不能为文件路径，应为文件夹路径；=>" + outPath);
+			return ;
+		} else if(!file.exists()) {
+			file.mkdirs();
+		}
+		
+		
 		try {
 			sftp.get(filePath, outPath, new ProgressMonitor());
 		} catch (SftpException e) {
 			e.printStackTrace();
-			System.err.println("文件下载异常==> "+ e.getMessage());
+			System.err.println("文件下载异常==> "+ e.getMessage() + "path=> "+ filePath);
 		}
 	}
 	
@@ -107,23 +138,28 @@ public class SFTPManager {
 			System.out.println("未找到需要上传的文件及其路径 " + filePath);
 			return ;
 		}
+		boolean isDirectoryExists = cdDirectory(sftp, uploadPath);
+		if(!isDirectoryExists) { //目录不存在
+			if(!mkdirDirectory(sftp, uploadPath)) {
+				System.out.println("目录不存在，且创建目录失败；==> "+ uploadPath);
+				return ;
+			}
+		}
 		
 		if(file.isDirectory()) {
-			String directoryName = file.getName();
-			//检查sftp是否存在此目录
-			if(cdDirectory(sftp, uploadPath)) {
-				
-			} else {
-				mkdirDirectory(sftp, directoryName);
+			File[] listFiles = file.listFiles();
+			String parentDirectory = uploadPath + "/" + file.getName();
+			for (int i = 0; i < listFiles.length; i++) {
+				uploadFile(sftp, parentDirectory, listFiles[i].getPath());
 			}
-			
 		} else {
 			try {
-				sftp.put(uploadPath, filePath, new ProgressMonitor());
+				sftp.put(filePath, uploadPath, new ProgressMonitor());
 			} catch (SftpException e) {
 				e.printStackTrace();
 			}
 		}
+		
 	}
 	
 	
@@ -141,10 +177,11 @@ public class SFTPManager {
 	public static boolean mkdirDirectory(ChannelSftp sftp, String path) {
 		try {
 			sftp.mkdir(path);
+			System.out.println("创建目录成功 => " + path);
 			return true;
 		} catch (SftpException e) {
 			e.printStackTrace();
-			System.err.println("目录创建失败 => "+ path);
+			System.err.println("创建目录失败 => "+ path);
 		}
 		return false;
 	}

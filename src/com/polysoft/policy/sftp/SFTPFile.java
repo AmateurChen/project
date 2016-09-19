@@ -1,5 +1,9 @@
 package com.polysoft.policy.sftp;
 
+import java.io.File;
+
+import com.polysoft.policy.utils.TextUtil;
+
 public class SFTPFile {
 	private String parentPath;
 	
@@ -17,6 +21,10 @@ public class SFTPFile {
 
 	public void setParentPath(String parentPath) {
 		this.parentPath = parentPath;
+		
+		if(!TextUtil.isEndSeparator(parentPath)){
+			this.parentPath = parentPath + "/";
+		}
 	}
 
 	public String getFileName() {
